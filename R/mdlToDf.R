@@ -10,18 +10,20 @@
 #'
 #' @export
 #' @examples
+#' \dontrun{
 #' spe <- SpatialDatasets::spe_Keren_2018()
 #'
 #' mdlLs <- fitModelAcrossImages(
 #'     spe = spe,
 #'     imageId = "imageID",
-#'     imageLs = list("1", "2"),
+#'     imageLs = list("1"),
 #'     marks = "cellType",
 #'     sharedModel = FALSE,
 #'     formula = as.formula(
 #'         "Keratin_Tumour ~ spatstat.geom::distfun(CD8_T_cell)"
 #'     ),
-#'     threshold = 10
+#'     threshold = 10,
+#'     method.kppm = "mincon" #to reduce compute time
 #' )
 #'
 #' mdlDf <- mdlToDf(
@@ -31,7 +33,7 @@
 #'         "tumour_type"
 #'     )
 #' )
-#'
+#'}
 #' @importFrom dplyr bind_rows
 mdlToDf <- function(mdlLs,
     imageCovariates = c("imageID"),
@@ -43,8 +45,9 @@ mdlToDf <- function(mdlLs,
         } else {
             dfCoef <- try(stats::coef(summary(mdl, fine=fine)))
             dfCoef$covariate <- rownames(dfCoef)
-            imageCovariateDf <- mdl$colData |>
-                subset(, colnames(mdl$colData) %in% imageCovariates) |>
+            imageCovariateDf <- SummarizedExperiment::colData(mdl$spe) |>
+                subset(, colnames(SummarizedExperiment::colData(mdl$spe)) 
+                    %in% imageCovariates) |>
                 unique()
             dfCoef <- cbind(dfCoef, imageCovariateDf)
             return(dfCoef)

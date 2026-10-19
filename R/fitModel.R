@@ -6,8 +6,8 @@
 #' use for computation. Typically one of `ppm`, `kppm` or `dppm`.
 #' @param marks `character`; the column with the labels e.g. cell types
 #' @param formula `formula`; the formula to pass to the `ppm` function
-#' @param family `detpointprocfamily`; Family to use in the point process model.
-#' One of `dppGauss`, `dppMatern`, `dppCauchy`, `dppBessel` or `dppPowerExp`
+#' @param clusters `character`; Cox Process or clustering variant to use with
+#' `kppm`. One of either "Thomas", "MatClust", "Cauchy", "VarGamma", "LGCP"
 #' @param threshold `numeric`; a threshold to apply on the minimum number of
 #' points a point pattern needs to have to fit a `ppm` model to it.
 #' @param interaction `character`; Formula specifying whether to fit
@@ -23,10 +23,24 @@
 #' `spatstat.model::Hardcore`. In the case of `StraussHard`,
 #' only the Strauss interaction radius can be user-provided, the Hardcore
 #' interaction is always estimated from the data.
-#' @param improve.type `character` the improve.type argument 
-#' from spatstat.model::ppm.ppp, passed on directly
+#' @param improve.type `character` the improve.type argument to `ppm` or `kppm``
+#' from spatstat.model::ppm.ppp, passed on directly. Check the documentation for
+#' `ppm` or `kppm` for more details
+#' @param method.kppm `character` the method to use for `kppm`
+#' @param standardize `logical` whether or not to standardise all distances to 
+#' to a 0,1 interval to improve spline and polynomial fits 
 #' @param relaxed `logical` whether or not to perform a relaxed fit with only
 #' the non zero coefficients from `glmnet` improvement
+#' @param penalised `logical` whether or not to penalise against extreme values
+#' in the clustering in the objective function
+#' @param selectionExclude `character`; Formula term specified to be removed
+#' from the selection of the Lasso. This is necessary with 
+#' `improve.type = "enet"`, because else the $p$-values will be not valid due
+#' to obvious double dipping. The inference then becomes an LRT with and without
+#' the variable indicated in `selectionExclude`.
+#' @param ctrlKppm `list`; a named list to control the `kppm` fit
+#' @param covmodel `list`; a named list with the covariance options for the
+#' LGCP model
 #' @param ... other parameters passed on to `ppm` model from `spatstat.model`
 #'
 #' @returns `list`; result from a `dppm` model in `spatstat.model`
@@ -41,7 +55,8 @@
 #'     marks = "cellType",
 #'     formula = as.formula(
 #'         "Keratin_Tumour ~ spatstat.geom::distfun(CD8_T_cell)"
-#'     )
+#'     ),
+#'     method.kppm = "mincon" #to reduce compute time
 #' )
 #'
 #' @importFrom mgcv s
@@ -50,16 +65,22 @@
 #' @importFrom spatstat.model ppm
 fitModel <- function(
     spe,
-    model = "ppm",
+    model = "kppm",
     marks,
     formula,
-    family = spatstat.model::dppGauss(),
+    clusters = "LGCP",
     threshold = NULL,
-    interaction = "Fiksel",
+    interaction = "Hardcore",
     lambda = NULL,
     cellspacing = NA,
     improve.type = NULL,
+    method.kppm = "palm",
     relaxed = FALSE,
+    penalised = TRUE,
+    standardize = TRUE,
+    selectionExclude = NULL,
+    ctrlKppm=list(),
+    covmodel=list(model="matern", nu=1.5),
     ...
 ) {
     # some type assertions
@@ -70,7 +91,8 @@ fitModel <- function(
         is.null(threshold) || is.numeric(threshold),
         is.character(interaction) || is.null(interaction),
         is.null(lambda) || is(lambda, "im"),
-        is.na(cellspacing) || is.numeric(cellspacing)
+        is.na(cellspacing) || is.numeric(cellspacing),
+        is.null(selectionExclude) || is.character(selectionExclude)
     )
 
     # we do not need the assays anymore, therefore we set them to NULL
@@ -79,6 +101,22 @@ fitModel <- function(
     SummarizedExperiment::rowData(spe) <- S4Vectors::DataFrame(
         row.names = rownames(spe)
     )
+  
+    # standardise the distance for better fitting of polynomials and 
+    # splines
+    # we cannot directly do the interval 0,1 as the window has to be a bit larger
+    # and smaller than this. By adding the constant 1.49e-8 which we add and
+    # subtract from the window later, the observation window is exactly 0,1 
+    if(standardize){
+        #if the window is not square determine the longest edge, this is the 
+        #scaling factor
+        ### coded with claude.ai Opus 5.5
+        coords <- SpatialExperiment::spatialCoords(spe)
+        scale_factor <- max(diff(range(coords[, 1])), diff(range(coords[, 2])))
+        coords[, 1] <- (coords[, 1] - min(coords[, 1])) / scale_factor
+        coords[, 2] <- (coords[, 2] - min(coords[, 2])) / scale_factor
+        SpatialExperiment::spatialCoords(spe) <- coords
+    }
 
     if (identical(improve.type, "enet")) {
         requireNamespace("glmnet", quietly = TRUE)
@@ -86,6 +124,45 @@ fitModel <- function(
     # define the response
     response <- as.character(formula.tools::lhs(formula))
 
+    # if we do selection of variables with `improve.type = "enet"` we need
+    # to exclude the inferential variable because else the p-values will be
+    # not valid
+    if(identical(improve.type, "enet") && !is.null(selectionExclude)){
+        termLabels <- base::attr(stats::terms(formula), "term.labels")
+        
+        missingTerms <- setdiff(selectionExclude, termLabels)
+
+        if (length(missingTerms) > 0) {
+            stop(
+                "The following `selectionExclude` terms are not present ",
+                "in the model formula: ",
+                paste(missingTerms, collapse = ", "),
+                ". Supply multiple terms as a character vector, e.g. ",
+                '`c("log(x)", "density(Endothelial)")`.'
+            )
+        }
+        selectionTerms <- setdiff(termLabels, selectionExclude)
+        #keep the full formula for later
+        fullFormula <- formula
+        formula <- stats::reformulate(selectionTerms, 
+            response = response
+        )
+        # deparse the full Formula and extract the data - we need this to deparse
+        # also the excluded term
+        outFull <- deparseFormula(
+            spe = spe,
+            response = response,
+            formula = fullFormula,
+            marks = marks,
+            lambda = lambda,
+            threshold = threshold
+        )
+        fullFormula <- outFull[["formula"]]
+        fullData <- outFull[["data"]]
+    }else{
+        fullFormula <- NULL
+        fullData <- NULL
+    }
     # deparse the Formula and extract the data
     out <- deparseFormula(
         spe = spe,
@@ -104,13 +181,36 @@ fitModel <- function(
     formula <- out[["formula"]]
     data <- out[["data"]]
 
-    # parametrise the interaction model
-    interactionModel <- defineInteractionModel(
-        interaction = interaction,
-        cellspacing = cellspacing,
-        response = response,
-        data = data
-    )
+    # small hack to overwrite the reduced dataframe with the full dataframe
+    # to be able to refit later
+    if(!is.null(fullData)){
+        data <- fullData
+    }
+
+    #if the model is a `ppm` define an interaction model
+    if(model == "ppm"){
+        # parametrise the interaction model
+        interactionModel <- defineInteractionModel(
+            interaction = interaction,
+            cellspacing = cellspacing,
+            response = response,
+            data = data
+        )
+    }else if(model == "kppm"){
+        if(interaction == "Hardcore"){
+            if (is.null(cellspacing) || is.na(cellspacing)) {
+                minNnDist <- spatstat.geom::minnndist(data[[response]])
+                nX <- spatstat.geom::npoints(data[[response]])
+                cellspacing <- minNnDist * nX / (nX + 1)
+            }
+            ctrlKppm$rmin <- cellspacing
+        }else if(is.null(interaction)){
+            ctrlKppm <- ctrlKppm
+        }else{
+            stop(interaction, " is not implemented for ", model)
+        }
+    }
+    
 
     # fix for `sf` object evaluation as suggested by Adrian Baddeley
     transformSf <- function(z) {
@@ -118,26 +218,51 @@ fitModel <- function(
             if (inherits(x, "sf")) spatstat.geom::as.owin(x) else x
         })
     }
-
-    mdl <- do.call(model,
-        args = list(
-            Q = formula,
-            data = transformSf(data),
-            interaction = interactionModel,
-            improve.type = improve.type,
-            ...
+    if(model == "ppm"){
+        mdl <- do.call(model,
+            args = list(
+                Q = formula,
+                data = transformSf(data),
+                interaction = interactionModel,
+                improve.type = improve.type,
+                ...
+            )
         )
-    )
+    }else if(model == "kppm"){
+        mdl <- do.call(model,
+            args = list(
+                X = formula,
+                data = transformSf(data),
+                clusters = clusters,
+                improve.type = improve.type,
+                method = method.kppm,
+                ctrl = ctrlKppm,
+                penalised = penalised,
+                covmodel = covmodel,
+                ...
+            )
+        )
+    }else if(model == "dppm"){
+        mdl <- do.call(model,
+            args = list(
+                formula = formula,
+                data = transformSf(data),
+                ...
+            )
+        )
+    }else{
+        stop("Model is not implemented")
+    }
     #if we fit an elastic net, some coefficients can be zeroed out
     #in that case it can be advantageous to refit the model with only
     #the non-zero coefficients
     #coded with claude.ai
-    if(improve.type == "enet" && relaxed == TRUE){
+    if(identical(improve.type, "enet") && relaxed == TRUE){
         allCoefs <- stats::coef(mdl)
-        fullFormula <- mdl$trend   
+        selectionFormula <- mdl$trend 
         # extract the model matrix and the terms from the formula
         mm <- stats::model.matrix(mdl)
-        termLabels <- base::attr(stats::terms(fullFormula), "term.labels")
+        termLabels <- base::attr(stats::terms(selectionFormula), "term.labels")
         assignVec  <- base::attr(mm, "assign")  
 
         # keep any enet fit coefficient which is greater zero -> if one 
@@ -151,18 +276,36 @@ fitModel <- function(
             keepTerms <- c(keepTerms, termLabels[i])
             }
         }
+        
+        # problem with pre-evaluated spatstat function handling
+        # improved by GPT 5.6
+        if(!is.null(fullFormula)){
+            fullTerms <- base::attr(stats::terms(fullFormula), "term.labels")
+            excludedTerms <- setdiff(fullTerms, termLabels)
+        }else{
+            excludedTerms <- character()
+        }
+        # add the selectionExclude argument back
+        refitTerms <- unique(c(
+            keepTerms,
+            excludedTerms
+        ))
 
         # build the formula from the intact terms not from the model matrix
         # due to the spline bases
-        refitFormula <- stats::reformulate(c("1", keepTerms))
+        refitFormula <- stats::reformulate(refitTerms, 
+            response = response
+        )
 
         # refit unpenalised with only the non-zero coefficients
         mdl <- stats::update(mdl, Q = refitFormula, improve.type = "none")
         message("Model was fit with relaxed enet. The number of coefficients can
-        therefore be different than an unregularised fit")
+        therefore be different than an unregularised fit. The post-selection
+        p-values are only approximate")
     }
     # add covariates to the mdl list
-    mdl$colData <- colData(spe)
+    mdl$spe <- spe
+    mdl$marks <- marks
     class(mdl) <- c("multipointRppm", class(mdl))
     return(mdl)
 }
@@ -193,6 +336,10 @@ fitModel <- function(
 #' @method plot multipointRppm
 #' @importFrom rlang .data
 plot.multipointRppm <- function(x, type = "trend", ...) {
+    #if we have a `kppm` extract the `ppm` fit from the first step
+    if("kppm" %in% class(x)){
+      x <- spatstat.model::as.ppm(x)
+    }
     ### coded with the help of claude.ai ###
     stopifnot(spatstat.geom::verifyclass(x, "ppm"))
     # extract the response `ppp` object

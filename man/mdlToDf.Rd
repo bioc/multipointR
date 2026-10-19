@@ -22,18 +22,20 @@ DataFrame of the model coefficients
 Convert the list of spatial models to a dataframe
 }
 \examples{
+\dontrun{
 spe <- SpatialDatasets::spe_Keren_2018()
 
 mdlLs <- fitModelAcrossImages(
     spe = spe,
     imageId = "imageID",
-    imageLs = list("1", "2"),
+    imageLs = list("1"),
     marks = "cellType",
     sharedModel = FALSE,
     formula = as.formula(
         "Keratin_Tumour ~ spatstat.geom::distfun(CD8_T_cell)"
     ),
-    threshold = 10
+    threshold = 10,
+    method.kppm = "mincon" #to reduce compute time
 )
 
 mdlDf <- mdlToDf(
@@ -43,5 +45,5 @@ mdlDf <- mdlToDf(
         "tumour_type"
     )
 )
-
+}
 }

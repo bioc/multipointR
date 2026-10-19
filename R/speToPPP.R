@@ -21,14 +21,18 @@
     pp <- spatstat.geom::as.ppp(data.frame(x = df$x, y = df$y),
         W = spatstat.geom::owin(
             c(
-                base::min(df$x) - 1.49e-8,
-                base::max(df$x) + 1.49e-8
+                base::min(df$x),
+                base::max(df$x)
             ),
             c(
-                base::min(df$y) - 1.49e-8,
-                base::max(df$y) + 1.49e-8
+                base::min(df$y),
+                base::max(df$y)
             )
         )
+    )
+    stopifnot(
+        "window x-range has a negative edge" = all(pp$window$xrange >= 0),
+        "window y-range has a negative edge" = all(pp$window$yrange >= 0)
     )
     # set the marks
     if (!continuous) {

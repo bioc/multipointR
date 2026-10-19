@@ -50,11 +50,14 @@ defineInteractionModel <- function(
 ) {
     # calculate the minimum nearest neighbour distance if `is.null(cellspacing)`
     ### adapted from spatstat.model::Hardcore GPL-2 licensed
-    if (length(cellspacing) > 0 || is.na(cellspacing)) {
+    if (is.null(cellspacing) || is.na(cellspacing)) {
         minNnDist <- spatstat.geom::minnndist(data[[response]])
         nX <- spatstat.geom::npoints(data[[response]])
         cellspacing <- minNnDist * nX / (nX + 1)
     }
+    # calculate the bounding radius to obtain a heuristic how to optimise the 
+    # Fiksel interaction radius
+    boundingradius <- spatstat.geom::boundingradius(data[[response]])
     ### end of directly adapted code ###
     if (is.null(interaction)) {
         interactionModel <- interaction
@@ -68,7 +71,7 @@ defineInteractionModel <- function(
     } else if (interaction == "StraussHard") {
         # optimise the model parameters
         rs <- expand.grid(
-            r = seq(cellspacing + 0.1, cellspacing + 5, by = 0.5),
+            r = seq(cellspacing + 1e-10, cellspacing + boundingradius/2, by = 0.5),
             hc = cellspacing
         )
         pg <- spatstat.model::profilepl(rs, spatstat.model::StraussHard,
@@ -78,7 +81,7 @@ defineInteractionModel <- function(
     } else if (interaction == "Fiksel") {
         # optimise the model parameters
         rs <- expand.grid(
-            r = seq(cellspacing + 0.1, cellspacing + 5, by = 0.5),
+            r = seq(cellspacing + 1e-10, cellspacing + boundingradius/2, by = 0.5),
             hc = cellspacing,
             kappa = seq(0.5, 2, by = 0.5)
         )

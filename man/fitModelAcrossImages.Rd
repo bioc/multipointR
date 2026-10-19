@@ -7,14 +7,14 @@
 \usage{
 fitModelAcrossImages(
   spe,
-  model = "ppm",
+  model = "kppm",
   imageId,
   imageLs = NULL,
   marks,
   formula,
   family = spatstat.model::dppGauss(),
   threshold = NULL,
-  interaction = "Fiksel",
+  interaction = "Hardcore",
   cellspacing = NA,
   lambda = NULL,
   sharedModel = FALSE,
@@ -81,12 +81,13 @@ spe <- SpatialDatasets::spe_Keren_2018()
 mdl <- fitModelAcrossImages(
     spe = spe,
     imageId = "imageID",
-    imageLs = list("1", "2"),
+    imageLs = list("1"),
     marks = "cellType",
     formula = as.formula(
         "Keratin_Tumour ~ spatstat.geom::distfun(CD8_T_cell)"
     ),
-    threshold = 10
+    threshold = 10,
+    method.kppm = "mincon" #to reduce compute time
 )
 
 }

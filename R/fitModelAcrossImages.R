@@ -30,7 +30,7 @@
 #'
 #'
 .fitSingelModelsPerImage <- function(spe,
-    model = "ppm",
+    model = "kppm",
     imageId,
     imageLs = NULL,
     marks,
@@ -100,7 +100,7 @@
 #'
 .fitSharedModelAcrossImages <- function(
     spe,
-    model = "ppm",
+    model = "mppm",
     imageId,
     imageLs = NULL,
     marks,
@@ -255,26 +255,27 @@
 #' mdl <- fitModelAcrossImages(
 #'     spe = spe,
 #'     imageId = "imageID",
-#'     imageLs = list("1", "2"),
+#'     imageLs = list("1"),
 #'     marks = "cellType",
 #'     formula = as.formula(
 #'         "Keratin_Tumour ~ spatstat.geom::distfun(CD8_T_cell)"
 #'     ),
-#'     threshold = 10
+#'     threshold = 10,
+#'     method.kppm = "mincon" #to reduce compute time
 #' )
 #'
 #' @importFrom mgcv s
 #' @importFrom spatstat.model dppm
 #' @importFrom spatstat.model kppm
 fitModelAcrossImages <- function(spe,
-    model = "ppm",
+    model = "kppm",
     imageId,
     imageLs = NULL,
     marks,
     formula,
     family = spatstat.model::dppGauss(),
     threshold = NULL,
-    interaction = "Fiksel",
+    interaction = "Hardcore",
     cellspacing = NA,
     lambda = NULL,
     sharedModel = FALSE,

@@ -80,7 +80,7 @@ fitModel <- function(
     standardize = TRUE,
     selectionExclude = NULL,
     ctrlKppm=list(),
-    covmodel=list(model="matern", nu=1.5),
+    covmodel=list(model="exponential"),
     ...
 ) {
     # some type assertions

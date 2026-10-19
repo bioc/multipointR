@@ -1,3 +1,7 @@
+# multipointR 0.99.7
+* complete rewrite of the defaults to log Gaussian Cox process models
+* implementing relaxed fitting of regularised models
+
 # multipointR 0.99.6
 * adapted vignette to new functionality with `splines` package
 * also reducing time to build vignette

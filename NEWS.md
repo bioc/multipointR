@@ -1,3 +1,9 @@
+# multipointR 0.99.8
+* wrote a new function to perform fast approximations of the covariance matrix 
+of a lgcp model. The functionality was present already in `vcov.kppm` but could
+not be called in `summary.kppm`. Wrote a new generic `summary` for 
+`multipointRppm` objects that allows to call the fast `vcov.kppm` function.
+
 # multipointR 0.99.7
 * complete rewrite of the defaults to log Gaussian Cox process models
 * implementing relaxed fitting of regularised models

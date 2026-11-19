@@ -1,3 +1,6 @@
+# multipointR 0.99.13
+* simplify one test to not timeout on BBS
+
 # multipointR 0.99.12
 * enable the passing of an image covariate to `fitModels` as stored in the 
 `SpatialExperiment::imgData` slot. 
